@@ -1,101 +1,120 @@
-# Name: Peter Surlina
-# Description:
-# Skeleton Outline of potential Drone GUI Controller
-import tkinter as tk
+#!/usr/bin/env python3
 
-# Top level window
-root = tk.Tk()
-root.title("Drone GUI")
-root.geometry('1000x650')
+import asyncio
+
+from mavsdk import System
+from mavsdk.mission import (MissionItem, MissionPlan)
 
 
-# Function for getting Input from textboxes and printing it in label widget
-def printInput():
-    latInput = latTxt.get(1.0, "end-1c")
-    longInput = longTxt.get(1.0, "end-1c")
+async def run():
+    drone = System()
+    await drone.connect(system_address="udp://:14540")
 
-    lbl2.config(text="Provided Coordinates: (" + latInput + " , " + longInput + ")")
+    print("Waiting for drone to connect...")
+    async for state in drone.core.connection_state():
+        if state.is_connected:
+            print(f"-- Connected to drone!")
+            break
+
+    print_mission_progress_task = asyncio.ensure_future(
+        print_mission_progress(drone))
+
+    running_tasks = [print_mission_progress_task]
+    termination_task = asyncio.ensure_future(
+        observe_is_in_air(drone, running_tasks))
+
+    mission_items = []
+    mission_items.append(MissionItem(47.398039859999997,
+                                     8.5455725400000002,
+                                     25,
+                                     10,
+                                     True,
+                                     float('nan'),
+                                     float('nan'),
+                                     MissionItem.CameraAction.NONE,
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan')))
+    mission_items.append(MissionItem(47.398036222362471,
+                                     8.5450146439425509,
+                                     25,
+                                     10,
+                                     True,
+                                     float('nan'),
+                                     float('nan'),
+                                     MissionItem.CameraAction.NONE,
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan')))
+    mission_items.append(MissionItem(47.397825620791885,
+                                     8.5450092830163271,
+                                     25,
+                                     10,
+                                     True,
+                                     float('nan'),
+                                     float('nan'),
+                                     MissionItem.CameraAction.NONE,
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan'),
+                                     float('nan')))
+
+    mission_plan = MissionPlan(mission_items)
+
+    await drone.mission.set_return_to_launch_after_mission(True)
+
+    print("-- Uploading mission")
+    await drone.mission.upload_mission(mission_plan)
+
+    print("Waiting for drone to have a global position estimate...")
+    async for health in drone.telemetry.health():
+        if health.is_global_position_ok and health.is_home_position_ok:
+            print("-- Global position estimate OK")
+            break
+
+    print("-- Arming")
+    await drone.action.arm()
+
+    print("-- Starting mission")
+    await drone.mission.start_mission()
+
+    await termination_task
 
 
-def moveRight():
-    directionLabel.config(text="Drone moved Right")
-    return
+async def print_mission_progress(drone):
+    async for mission_progress in drone.mission.mission_progress():
+        print(f"Mission progress: "
+              f"{mission_progress.current}/"
+              f"{mission_progress.total}")
 
 
-def moveLeft():
-    directionLabel.config(text="Drone moved Left")
-    return
+async def observe_is_in_air(drone, running_tasks):
+    """ Monitors whether the drone is flying or not and
+    returns after landing """
+
+    was_in_air = False
+
+    async for is_in_air in drone.telemetry.in_air():
+        if is_in_air:
+            was_in_air = is_in_air
+
+        if was_in_air and not is_in_air:
+            for task in running_tasks:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            await asyncio.get_event_loop().shutdown_asyncgens()
+
+            return
 
 
-def moveBackward():
-    directionLabel.config(text="Drone moved Backwards")
-    return
-
-
-def moveForward():
-    directionLabel.config(text="Drone moved Forwards")
-    return
-
-
-def moveUp():
-    directionLabel.config(text="Drone moved Upward")
-    return
-
-
-def moveDown():
-    directionLabel.config(text="Drone moved Downward")
-    return
-
-
-def close():  # Must Include Condition that Drone is in flight so, we can't exit; wait until landed
-    root.destroy()
-
-
-# TextBox Creation
-latTxt = tk.Text(root, height=2, width=30)
-latTxt.place(x=110, y=215)
-
-longTxt = tk.Text(root, height=2, width=30)
-longTxt.place(x=110, y=265)
-
-# Button Creation
-printButton = tk.Button(root, text="Print Coordinates", command=printInput)
-printButton.place(x=150, y=335)
-
-forwardButton = tk.Button(root, text="Move Forward", command=moveForward)
-forwardButton.place(x=600, y=170)
-
-backwardButton = tk.Button(root, text="Move Backward", command=moveBackward)
-backwardButton.place(x=600, y=320)
-
-leftButton = tk.Button(root, text="Move Left", command=moveLeft)
-leftButton.place(x=500, y=245)
-
-rightButton = tk.Button(root, text="Move Right", command=moveRight)
-rightButton.place(x=730, y=245)
-
-upButton = tk.Button(root, text="Move Up", command=moveUp)
-upButton.place(x=730, y=400)
-
-downButton = tk.Button(root, text="Move Down", command=moveDown)
-downButton.place(x=830, y=400)
-
-exitButton = tk.Button(root, text="Exit", command=close)
-exitButton.place(x=260, y=450)
-
-# Label Creation
-lbl = tk.Label(root, text="Place Coordinates")
-lbl.place(x=150, y=160)
-
-latLabel = tk.Label(root, text="Latitude: ")
-latLabel.place(x=25, y=225)
-
-longLabel = tk.Label(root, text="Longitude: ")
-longLabel.place(x=25, y=275)
-
-directionLabel = tk.Label(root, text="Which way are we going?")
-directionLabel.place(x=445, y=400)
-
-lbl2 = tk.Label(root)
-lbl2.place(x=100, y=400)
-root.mainloop()
+if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(run())
